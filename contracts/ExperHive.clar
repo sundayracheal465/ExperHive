@@ -1,5 +1,5 @@
 ;; Enhanced ExperHive Smart Contract with Security Framework
-;; Version 2.2 - All Security Warnings Fixed
+;; Version 2.3 - Optimized Reentrancy Protection
 
 ;; ============================================================================
 ;; SECURITY CONSTANTS
@@ -300,13 +300,13 @@
         u1))
 
 ;; ============================================================================
-;; SECURITY FUNCTIONS - FIXED RETURN TYPES
+;; OPTIMIZED SECURITY FUNCTIONS
 ;; ============================================================================
 
 ;; Initialize contract owner with admin role
 (map-set user-roles CONTRACT_OWNER ROLE_ADMIN)
 
-;; Security check functions with proper return types
+;; Reentrancy protection - only used around external calls
 (define-private (check-reentrancy)
     (begin
         (asserts! (not (var-get reentrancy-guard)) ERR_REENTRANCY)
@@ -343,15 +343,24 @@
         (asserts! (not (var-get emergency-mode)) ERR_PAUSED)
         (ok true)))
 
-;; Enhanced authorization wrapper with proper error handling
+;; OPTIMIZED: Removed reentrancy check from global security wrapper
 (define-private (with-security-checks (user principal) (required-role uint))
     (begin
-        (try! (check-reentrancy))
+        ;; Reentrancy guard removed - only applied around external calls
         (try! (check-not-paused))
         (try! (check-emergency-mode))
         (try! (check-rate-limit user))
         (asserts! (has-role user required-role) ERR_INSUFFICIENT_ROLE)
         (ok true)))
+
+;; Wrapper for external calls that need reentrancy protection
+(define-private (with-reentrancy-protection (external-call (response bool uint)))
+    (begin
+        (try! (check-reentrancy))
+        (let ((result external-call))
+            (begin
+                (unwrap-panic (clear-reentrancy))
+                result))))
 
 ;; Log security events
 (define-private (log-security-event (event-type (string-ascii 32)) (user principal) (details (string-ascii 128)))
@@ -398,7 +407,7 @@
         (unwrap-panic (log-security-event "emergency-mode-off" tx-sender "Emergency mode deactivated"))
         (ok "Emergency mode deactivated")))
 
-;; Role management
+;; Role management - no external calls, no reentrancy protection needed
 (define-public (grant-role (user principal) (role uint))
     (begin
         (try! (with-security-checks tx-sender ROLE_ADMIN))
@@ -406,7 +415,6 @@
         (asserts! (validate-trusted-principal user) ERR_INVALID_PRINCIPAL)
         (map-set user-roles user role)
         (unwrap-panic (log-security-event "role-granted" user "Role granted"))
-        (unwrap-panic (clear-reentrancy))
         (ok "Role granted")))
 
 (define-public (revoke-role (user principal))
@@ -416,10 +424,9 @@
         (asserts! (validate-trusted-principal user) ERR_INVALID_PRINCIPAL)
         (map-set user-roles user ROLE_USER)
         (unwrap-panic (log-security-event "role-revoked" user "Role revoked"))
-        (unwrap-panic (clear-reentrancy))
         (ok "Role revoked")))
 
-;; Multi-signature operations for critical functions - SECURITY ENHANCED
+;; Multi-signature operations - no external calls in creation, no reentrancy protection needed
 (define-public (create-multisig-operation 
     (operation (string-ascii 64))
     (target principal)
@@ -461,7 +468,6 @@
                 
                 (var-set next-operation-id (+ operation-id u1))
                 (unwrap-panic (log-security-event "multisig-created" tx-sender sanitized-operation))
-                (unwrap-panic (clear-reentrancy))
                 (ok operation-id)))))
 
 (define-public (approve-multisig-operation (operation-id uint))
@@ -501,7 +507,6 @@
                                 (tuple (approvals (unwrap! (as-max-len? (append current-approvals tx-sender) u5) ERR_INVALID_INPUT))))))
                     
                     (unwrap-panic (log-security-event "multisig-approved" tx-sender validated-operation))
-                    (unwrap-panic (clear-reentrancy))
                     (ok "Operation approved"))))))
 
 ;; ============================================================================
@@ -665,7 +670,7 @@
             (ok true))))
 
 ;; ============================================================================
-;; ENHANCED PUBLIC FUNCTIONS (With Security)
+;; ENHANCED PUBLIC FUNCTIONS (With Optimized Security)
 ;; ============================================================================
 
 (define-public (add-authorized-verifier (verifier principal))
@@ -675,7 +680,6 @@
         (map-set authorized-verifiers verifier true)
         (map-set user-roles verifier ROLE_VERIFIER)
         (unwrap-panic (log-security-event "verifier-added" verifier "Authorized verifier added"))
-        (unwrap-panic (clear-reentrancy))
         (ok "Verifier added")))
 
 (define-public (add-skill (skill (string-ascii 32)))
@@ -689,7 +693,6 @@
                 (map-set skills {user: tx-sender} 
                     (unwrap! (as-max-len? (append existing skill) u10) ERR_INVALID_INPUT))
                 (unwrap-panic (update-user-activity tx-sender))
-                (unwrap-panic (clear-reentrancy))
                 (ok "Skill added")))))
 
 (define-public (endorse (user principal) (skill (string-ascii 32)))
@@ -718,7 +721,6 @@
                         (tuple 
                             (total-endorsements-received (+ (get total-endorsements-received endorsed-rep) u1))
                             (last-activity stacks-block-height))))
-                (unwrap-panic (clear-reentrancy))
                 (ok "Endorsed")))))
 
 (define-public (rate-skill (user principal) (skill (string-ascii 32)) (rating uint))
@@ -737,13 +739,13 @@
                         (total-score (+ (get total-score current-ratings) rating))
                         (rating-count (+ (get rating-count current-ratings) u1))))
                 (unwrap-panic (update-user-activity tx-sender))
-                (unwrap-panic (clear-reentrancy))
                 (ok "Rating added")))))
 
 ;; ============================================================================
-;; CHALLENGE SYSTEM (Enhanced with Security)
+;; CHALLENGE SYSTEM (Enhanced with Optimized Security)
 ;; ============================================================================
 
+;; OPTIMIZED: Reentrancy protection only around the external STX transfer
 (define-public (create-challenge
     (skill (string-ascii 32))
     (title (string-ascii 64))
@@ -767,7 +769,8 @@
             (asserts! (<= max-participants u100) ERR_INVALID_INPUT)
             (asserts! (>= (stx-get-balance tx-sender) reward) ERR_INSUFFICIENT_FUNDS)
             
-            ;; Transfer reward to contract
+            ;; OPTIMIZED: Reentrancy protection only around external transfer
+            (try! (check-reentrancy))
             (try! (stx-transfer? reward tx-sender (as-contract tx-sender)))
             
             (map-set skill-challenges challenge-id
@@ -792,6 +795,8 @@
             
             (var-set next-challenge-id (+ challenge-id u1))
             (unwrap-panic (log-security-event "challenge-created" tx-sender title))
+            
+            ;; Clear reentrancy guard after external call and updates
             (unwrap-panic (clear-reentrancy))
             (ok challenge-id))))
 
@@ -818,7 +823,6 @@
                     (reviewed false)))
             
             (unwrap-panic (update-user-activity tx-sender))
-            (unwrap-panic (clear-reentrancy))
             (ok "Participation recorded"))))
 
 (define-public (review-challenge-submission
@@ -850,7 +854,6 @@
                 (tuple (challenge-id challenge-id) (participant participant))
                 (merge submission (tuple (score score) (reviewed true))))
             
-            (unwrap-panic (clear-reentrancy))
             (ok "Review submitted"))))
 
 (define-public (complete-challenge (challenge-id uint))
@@ -867,11 +870,10 @@
             ;; Award NFT to top performer (simplified logic)
             (try! (award-challenge-nft challenge-id))
             
-            (unwrap-panic (clear-reentrancy))
             (ok "Challenge completed"))))
 
 ;; ============================================================================
-;; REPUTATION & NFT FUNCTIONS (Enhanced with Security)
+;; REPUTATION & NFT FUNCTIONS (Enhanced with Optimized Security)
 ;; ============================================================================
 
 (define-public (update-endorsement-accuracy
@@ -899,7 +901,6 @@
                                       (+ (get validation-count current-accuracy) u1)))
                     (validation-count (+ (get validation-count current-accuracy) u1)))))
         
-        (unwrap-panic (clear-reentrancy))
         (ok "Accuracy updated")))
 
 (define-public (mint-skill-nft
@@ -935,7 +936,6 @@
             
             (var-set next-nft-id (+ nft-id u1))
             (unwrap-panic (log-security-event "nft-minted" recipient achievement-type))
-            (unwrap-panic (clear-reentrancy))
             (ok nft-id))))
 
 (define-private (award-challenge-nft (challenge-id uint))
@@ -971,11 +971,10 @@
                 (+ (default-to u0 (map-get? user-nft-count recipient)) u1))
             
             (unwrap-panic (log-security-event "nft-transferred" recipient "NFT transferred"))
-            (unwrap-panic (clear-reentrancy))
             (ok "NFT transferred"))))
 
 ;; ============================================================================
-;; REMAINING ORIGINAL FUNCTIONS (Enhanced with Security)
+;; REMAINING ORIGINAL FUNCTIONS (Enhanced with Optimized Security)
 ;; ============================================================================
 
 (define-public (add-verified-skill 
@@ -991,7 +990,6 @@
             (tuple (user user) (skill skill))
             (tuple (verified true) (verifier tx-sender)))
         (unwrap-panic (update-user-activity user))
-        (unwrap-panic (clear-reentrancy))
         (ok "Skill verified")))
 
 (define-public (endorse-with-expiry 
@@ -1008,7 +1006,6 @@
                     (tuple (endorsed user) (endorser tx-sender) (skill skill))
                     current-block)
                 (try! (endorse user skill))
-                (unwrap-panic (clear-reentrancy))
                 (ok "Endorsed with expiry")))))
 
 (define-public (update-skill-experience
@@ -1025,7 +1022,6 @@
             (tuple (user tx-sender) (skill skill))
             (tuple (level level) (years years)))
         (unwrap-panic (update-user-activity tx-sender))
-        (unwrap-panic (clear-reentrancy))
         (ok "Experience updated")))
 
 (define-public (set-endorser-weight 
@@ -1036,7 +1032,6 @@
         (asserts! (validate-trusted-principal endorser) ERR_INVALID_PRINCIPAL)
         (asserts! (validate-weight weight) ERR_INVALID_INPUT)
         (map-set endorser-weights endorser weight)
-        (unwrap-panic (clear-reentrancy))
         (ok "Weight set")))
 
 (define-public (add-skill-category (category (string-ascii 32)) (subcategories (list 10 (string-ascii 32))))
@@ -1044,7 +1039,6 @@
         (try! (with-security-checks tx-sender ROLE_ADMIN))
         (asserts! (validate-string-length category) ERR_INVALID_INPUT)
         (map-set skill-categories category subcategories)
-        (unwrap-panic (clear-reentrancy))
         (ok "Category added")))
 
 (define-public (revoke-endorsement 
@@ -1060,7 +1054,6 @@
                 (tuple (endorsed user) (skill skill))
                 (filter remove-sender endorsers))
             (unwrap-panic (update-user-activity tx-sender))
-            (unwrap-panic (clear-reentrancy))
             (ok "Endorsement revoked"))))
 
 (define-public (verify-experience
@@ -1075,7 +1068,6 @@
             (tuple (user user) (skill skill))
             (tuple (verified verified) (verifier tx-sender)))
         (unwrap-panic (update-user-activity user))
-        (unwrap-panic (clear-reentrancy))
         (ok "Experience verified")))
 
 ;; ============================================================================
